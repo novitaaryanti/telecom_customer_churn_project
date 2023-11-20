@@ -1,8 +1,9 @@
 ---
 title: "Telecom Customer Churn Analysis and Prediction"
 output:
-  pdf_document: default
   html_notebook: default
+  word_document: default
+  pdf_document: default
 ---
 
 ```{r, include=FALSE}
@@ -38,7 +39,7 @@ There are several features in the dataset. From the [dataset's source](https://a
 - **Status** = binary categorical where 1 = active and 2 = non-active
 - **Age** = actual age of the customer
 - **Customer Value** = calculated value of customer
-- **Churn** = binary categorical where 1 = churn and 2 = non-churn
+- **Churn** = binary categorical where 1 = churn and 0 = non-churn
 
 The class label (Y) is the feature 'Churn' where the others are the feature for predicting the churn.
 
@@ -246,7 +247,7 @@ df_train <- df[train_idx, ]
 
 
 # C. Training Model
-Do the 10-folds cross-validation. Metric ROC is used due to the imbalanced data based on the label 'Churn' as shown in the feature engineering step.
+Do the 5-folds cross-validation. Metric ROC is used due to the imbalanced data based on the label 'Churn' as shown in the feature engineering step.
 ```{r}
 control <- trainControl(method = "cv", number = 5, classProbs=TRUE, summaryFunction=twoClassSummary)
 metric <- "ROC"
