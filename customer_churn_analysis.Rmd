@@ -1,0 +1,306 @@
+---
+title: "Telecom Customer Churn Analysis and Prediction"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r, include=FALSE}
+library(ggplot2)
+library(lattice)
+library(caret)
+library(LiblineaR)
+```
+
+This project is a simple demonstration on how to implement machine learning in R. The dataset used for this dataset is obtained from the UC Irvine Machine Learning Repository named __[Iranian Churn Dataset](https://archive.ics.uci.edu/dataset/563/iranian+churn+dataset)__. The goal is to do binary classification to predict churn of telecom company. This prediction is useful to see the percentage of customer to discontinue in using the telecom services. If it the customer is labeled as churn, then the customer is likely to stop using the service.
+
+
+# A. Data Wrangling
+## 1. Data Exploration
+### a. Opening The Dataset
+```{r}
+df <- read.csv('customer_churn.csv')
+print(df)
+```
+
+There are several features in the dataset. From the [dataset's source](https://archive.ics.uci.edu/ml/datasets/Iranian+Churn+Dataset), the features represents:
+
+- **Call  Failure**: number of call failures
+- **Complains**: binary categorical where 0 = no complaint and 1 = complaint
+- **Subscription  Length**: total months of subscription
+- **Charge  Amount** = ordinal attribute in range 0 to 9 where 0 = lowest amount and 9 = highest amount
+- **Seconds of Use** = total seconds of calls
+- **Frequency of use** = total number of of calls 
+- **Frequency of SMS** = total number of text messages
+- **Distinct Called Numbers** = total number of distinct phone calls
+- **Age Group** = ordinal attribute in range 1 to 5 where 1 = younger age and 5 = older age
+- **Tariff Plan** = binary categorical where 1 = pay as you go and 2 = contractual
+- **Status** = binary categorical where 1 = active and 2 = non-active
+- **Age** = actual age of the customer
+- **Customer Value** = calculated value of customer
+- **Churn** = binary categorical where 1 = churn and 2 = non-churn
+
+The class label (Y) is the feature 'Churn' where the others are the feature for predicting the churn.
+
+
+
+## 2. Data Cleaning
+### a. Handling Missing Value
+Checking the missing value
+```{r}
+sapply(df, function(x) sum(x=="" | is.na(x)))
+```
+
+Apparently there is no missing value found. Even so, checking for the unique value in from each features is considered as a good practice to recognize unrelated value to the purpose of the features. If found, then the unrelated value can be considered as missing value.
+
+Checking for unique value from each features
+```{r}
+lapply(df, unique)
+```
+
+At a glance, there seems to be no unrelated value found.
+
+
+### b. Handling Inconsistent Format
+Checking for features's data type
+```{r}
+sapply(df, class)
+```
+
+Apparently all the features except 'Customer.Value' have integer data. The feature 'Customer Value' has numeric data type in double. All the features' data type have fit the feature's purpose.
+
+Checking the number of category for categorical features
+```{r}
+print("Number of unique value on each features:")
+sapply(df, function(x) length(unique(x)))
+```
+
+- Feature 'Charge' should have 2 unique values (0 = no complaint and 1 = complaint). As the unique value of this feature is 2, thus it is consistent.
+- Feature 'Charge Amount' should have 10 values (0 = lowest amount to 9 = highest amount). As the unique value of this feature is 11, thus it is inconsistent.
+```{r}
+# Checking for the unique value in feature 'Charge Amount'
+print("Unique value in 'Charge Amount':")
+print(unique(df$Charge..Amount))
+
+# Apparently, there is value '10'
+# Checking the percentage of data contains value '10'
+
+contains_val_10 = sapply(df, function(x) sum(x == 10)) / nrow(df) * 100
+print(paste("% of value 10 in feature 'Charge Amount': ", contains_val_10["Charge..Amount"]))
+```
+
+As the data with value 10 in feature 'Charge Amount' is only contains 0.2%, the data with value 10 in feature 'Charge Amount' will be removed from dataset.
+```{r}
+df <- df[df[, "Charge..Amount"] != 10, ]
+
+df
+```
+
+- Feature 'Age Group' should have 5 unique values (1 = younger age and 5 = older age). As the unique value of this feature is 5, thus it is consistent.
+- Feature 'Tariff Plan' should have 2 unique values (1 = pay as you go and 2 = contractual). As the unique value of this feature is 2, thus it is consistent.
+- Feature 'Status' should have 2 unique values (1 = active and 2 = non-active). As the unique value of this feature is 2, thus it is consistent.
+- Feature 'Churn' should have 2 unique values (1 = churn and 2 = non-churn). As the unique value of this feature is 2, thus it is consistent.
+
+Thus, the format is already consistent
+
+
+### c. Handling Duplicate Data
+Checking if there is duplicate data in the dataset
+```{r}
+dup <- duplicated(df)
+
+df[dup, ]
+```
+
+Apparently there are 300 duplicated data. Those data will be removed from the dataset.
+```{r}
+df <- unique(df)
+
+df
+```
+
+
+
+## 2. Data Analysis and Feature Engineering
+### a. Handling Imbalanced Data
+```{r}
+label_val_ctr = table(df[, "Churn"])
+percentages <- prop.table(label_val_ctr) * 100
+
+barplot(label_val_ctr, names.arg = names(label_val_ctr))
+```
+
+Based on the plot, the data seems to be imbalanced on the label 'Churn'. To handle it, the evaluation metric which will be used is F1-score
+
+
+### b. Feature Selection
+Checking the correlation of features with the label 'Churn'
+```{r}
+corr_label = cor(df[, "Churn"], df)
+
+corr_label
+```
+
+Sorting the correlation (absolute) of features
+```{r}
+sorted_idx_corr <- order(abs(corr_label), decreasing = TRUE)
+sorted_corr <- corr_label[sorted_idx_corr]
+sorted_features_corr <- names(df)[sorted_idx_corr]
+
+data.frame(features = sorted_features_corr, correlation = sorted_corr)
+```
+
+- It seems like only feature 'Complains' and 'Status' have moderate correlation
+- Feature 'Frequency of use', 'Seconds of Use', 'Customer Value', 'Distinct Called Numbers', 'Frequency of SMS', and 'Charge Amount' have low correlation
+
+The prediction will be focusing on those features with moderate correlation and low correlation. Thus, the irrelevant features will be dropped.
+
+```{r}
+irrelevant_feature <- colnames(corr_label)[apply(abs(corr_label) < 0.2, 2, any)]
+
+df <- df[, !names(df) %in% irrelevant_feature]
+print(df)
+```
+
+
+### c. Handling Outlier
+Check the feature data condition
+```{r}
+summary(df)
+
+```
+
+Excluding the categorical feature and the label 'Churn', the features which likely have outliers based on the summary:
+- 'Charge Amount' due to the 3rd quartile value = 1 is far from the max value = 9
+- 'Seconds of use' due to the 3rd quartile value = 1 is far from the max value = 9
+- 'Frequency of use' due to the 3rd quartile value = 6482 is far from the max value = 17090
+- 'Frequency of SMS' due to the 3rd quartile value = 89.00 is far from the max value = 522.00
+- 'Distinct Called Numbers' due to the 3rd quartile value = 34.00 is far from the max value = 97.00
+- 'Customer.Value' due to the 3rd quartile value = 7.91.1 is far from the max value = 2165.3
+
+Plotting the boxplot to see the outliers for more accurate
+```{r}
+plot_boxplot <- function(df){
+  par(mfrow = c(2, 5))
+  for (col in names(df)) {
+    boxplot(df[[col]], main = col, ylab = col)
+  }
+}
+```
+```{r}
+plot_boxplot(df)
+```
+
+To maintain the information, the outliers will be handled by changing the outlier value to upper extreme or lower extreme.
+```{r}
+handle_outlier <- function(df, features){
+  for (col in features){
+    data <- df[[col]]
+    
+    q <- quantile(data, probs=c(0.25, 0.75), na.rm = T)
+    
+    iqr <- 1.5 * IQR(data, na.rm = T)
+    
+    lower_ext = q[1] - iqr
+    upper_ext = q[2] + iqr
+    
+    data[data < lower_ext] <- lower_ext
+    data[data > upper_ext] <- upper_ext
+    
+    
+    df[[col]] <- data
+  }
+  
+  return (df)
+}
+```
+```{r}
+feature_out_handle <- c("Charge..Amount", "Seconds.of.Use", "Frequency.of.use", "Frequency.of.SMS", "Distinct.Called.Numbers", "Customer.Value")
+
+df <- handle_outlier(df, feature_out_handle)
+```
+
+
+Get the features summary and re-plotting to see the boxplot after handling the outliers
+```{r}
+summary(df)
+```
+```{r}
+plot_boxplot(df)
+```
+
+
+### d. Split Dataset into Train and Test Set
+```{r}
+df$Churn <- as.factor(df$Churn)
+df$Churn <- as.factor(ifelse(df$Churn == "0", "nonchurn", "churn"))
+
+set.seed(125)
+train_idx <- createDataPartition(df$Churn, p=0.8, list = FALSE)
+
+df_test <- df[-train_idx, ]
+df_train <- df[train_idx, ]
+```
+
+
+
+
+# C. Training Model
+Do the 10-folds cross-validation. Metric ROC is used due to the imbalanced data based on the label 'Churn' as shown in the feature engineering step.
+```{r}
+control <- trainControl(method = "cv", number = 5, classProbs=TRUE, summaryFunction=twoClassSummary)
+metric <- "ROC"
+```
+
+
+## 1 Initialize Model
+### a. Random Forest
+```{r}
+rf_model <- train(Churn~., data = df_train, method = "rf", metric = metric, trControl = control)
+
+rf_model
+```
+The best parameter for Random Forest on this case based on the ROC is using 2 features to consider at each split point (mtry).
+
+
+### b. Regularized Logistic Regression
+```{r}
+reglog_model <- train(Churn~., data = df_train, method = "regLogistic", metric = metric, trControl = control)
+
+reglog_model
+```
+The best parameters for Regularized Logistic Regression on this case based on the ROC are cost = 0.5, loss = L1, and epsilon = 0.001
+
+
+
+## 2. Evaluate Model
+Get the best models
+```{r}
+results <- resamples(list(rf = rf_model, reglog = reglog_model))
+
+dotplot(results)
+```
+From the result above, it appears that Random Forest is the most accurate model for the training set.
+
+
+
+## 3. Model Prediction Model
+Prediction using test set on Random Forest Model 
+```{r}
+rf_pred <- predict(rf_model, df_test)
+
+confusionMatrix(rf_pred, df_test$Churn)
+```
+Prediction using test set on Regularized Logistic Regression
+```{r}
+reglog_pred <- predict(reglog_model, df_test)
+
+confusionMatrix(reglog_pred, df_test$Churn)
+```
+From the result, Random Forest model has higher balanced accuracy with 0.8343 compared to Regularized Logistic Regression with 0.72263
+
+
+
+
+# D. Conclusion
+From the result, it is found that __Random Forest__ gives better performance compared to Regularized Logistic Regression based on the ROC = 0.9583140 and balanced accuracy = 0.8343. The best parameter for the Random Forest mode on this dataset based on the ROC is using 2 features to consider at each split point (mtry).
